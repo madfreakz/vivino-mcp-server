@@ -82,10 +82,9 @@ server.registerTool(
     title: 'Search Wines',
     description:
       "Search Vivino's wine catalog by name, winery, region, or grape variety. " +
-      'Supports filters: country codes (e.g. "fr", "it"), wine type ' +
-      '(1=Red, 2=White, 3=Sparkling, 4=Rosé, 7=Dessert, 24=Fortified), and rating range. ' +
-      'Returns wine IDs usable with other vivino_* tools. ' +
-      'Use this to discover wines or find Vivino IDs for wines you know.',
+      'Returns matching wines with their Vivino wine ID, winery, and URL. ' +
+      'Use this to find the Vivino ID for a wine you can name, or to discover wines. ' +
+      'For ratings, region, grapes, ABV, and taste data, pass a returned wine_id to vivino_get_wine_details.',
     inputSchema: searchInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false },
   },

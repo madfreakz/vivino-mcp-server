@@ -144,7 +144,9 @@ export async function getUserRatings(args: {
       per_page: args.per_page,
       count: ratings.length,
       next_start_from: lastActivityId,
-      has_more: ratings.length === args.per_page,
+      // Vivino ignores `limit` (returns ~10 activities per call), so has_more is
+      // driven by the cursor: Vivino returns no activities once exhausted.
+      has_more: lastActivityId !== null,
       ratings,
     };
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

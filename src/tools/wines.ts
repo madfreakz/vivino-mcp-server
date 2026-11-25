@@ -22,7 +22,8 @@ export function parseWineDetails(raw: unknown): VivinoWineDetails {
   const country = region?.country as Record<string, unknown> | undefined;
   const stats = (vintageObj?.statistics ?? wine.statistics) as Record<string, unknown> | undefined;
   const grapes = (wine.grapes as Array<Record<string, unknown>>) ?? [];
-  const food = (wine.food as Array<Record<string, unknown>>) ?? [];
+  // Wine page / vintage API use `foods`; older API responses used `food`.
+  const food = ((wine.foods ?? wine.food) as Array<Record<string, unknown>>) ?? [];
   const style = wine.style as Record<string, unknown> | undefined;
 
   return {
@@ -37,9 +38,22 @@ export function parseWineDetails(raw: unknown): VivinoWineDetails {
     ratings_count: stats?.ratings_count != null ? Number(stats.ratings_count) : null,
     style_description: style?.description ? String(style.description) : null,
     food_pairings: food.map(f => String(f.name ?? '')).filter(Boolean),
-    image_url: ((wine.label_image_url ?? (wine.image as Record<string, unknown> | undefined)?.location) as string | undefined) ?? null,
-    vivino_url: wine.seo_name ? `https://www.vivino.com/wines/${wine.seo_name}` : null,
+    image_url: normalizeImageUrl(
+      wine.label_image_url ??
+      (wine.image as Record<string, unknown> | undefined)?.location ??
+      (vintageObj?.image as Record<string, unknown> | undefined)?.location
+    ),
+    // Prefer the canonical page URL captured by fetchWineDetails. wine.seo_name is
+    // only the wine's own slug (e.g. "pinot-noir"), not a routable path, so fall
+    // back to /w/{id}, which Vivino redirects to the canonical page.
+    vivino_url: typeof d.vivino_url === 'string' ? d.vivino_url
+      : wine.id != null ? `https://www.vivino.com/w/${wine.id}` : null,
   };
+}
+
+function normalizeImageUrl(v: unknown): string | null {
+  if (typeof v !== 'string' || !v) return null;
+  return v.startsWith('//') ? `https:${v}` : v;
 }
 
 function normalizeTasteVal(v: unknown): number | null {

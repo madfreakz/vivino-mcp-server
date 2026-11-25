@@ -54,15 +54,14 @@ export interface VivinoReview {
   note_type: string | null;
 }
 
+// Vivino's text search is the server-rendered page at /search/wines?q= (the
+// /api/explore/explore endpoint ignores `q`). Its result cards only expose the
+// wine id, winery, name, and page URL — ratings/region/grapes/taste come from
+// passing the wine_id to vivino_get_wine_details.
 export interface VivinoSearchResult {
   wine_id: number;
   name: string;
   winery: string;
-  region: string | null;
-  country: string | null;
-  avg_rating: number | null;
-  ratings_count: number | null;
-  style_id: number | null;
   vivino_url: string | null;
 }
 

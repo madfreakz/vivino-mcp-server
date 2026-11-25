@@ -118,11 +118,17 @@ function makeActivityHtml(ratings: ReturnType<typeof makeRating>[]): string {
 
 // ---- Tests ----
 
+// Empty Vivino response: parseActivitiesBody finds no user-activity-* divs,
+// lastActivityId stays null, paginated loop exits on !lastActivityId.
+const EMPTY_ACTIVITIES_HTML = `$("#activities").append('');`;
+
 describe('syncToObsidian', () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vivino-test-'));
     vi.clearAllMocks();
     mockResolveUserId.mockResolvedValue(12345);
+    // Default fall-through for the paginated loop after the test's mockResolvedValueOnce
+    mockFetchActivities.mockResolvedValue(EMPTY_ACTIVITIES_HTML);
   });
 
   afterEach(() => {

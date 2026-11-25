@@ -1,4 +1,5 @@
 import axios, { AxiosError } from 'axios';
+import * as cheerio from 'cheerio';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -184,35 +185,46 @@ const apiHttp = axios.create({
   headers: baseHeaders({ Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }),
 });
 
-// Scrape the real Vivino vintage ID from the wine detail page.
-// The URL's /w/{id} is a routing ID; the actual API vintage ID lives in the page HTML
-// as `"vintage":{"id":<N>}`.
-async function scrapeRealVintageId(urlWineId: number, wineUrl: string): Promise<number> {
-  return getCached(`vintage-page:${urlWineId}`, async () => {
-    const res = await withRetry(() =>
-      axios.get(`${VIVINO_BASE_URL}${wineUrl}`, { headers: baseHeaders(), timeout: 15_000 })
-    );
-    const html: string = res.data;
-    const m = html.match(/"vintage":\{"id":(\d+)/);
-    if (!m) throw new Error(`Could not extract vintage ID from page: ${wineUrl}`);
-    return parseInt(m[1]);
-  }, CACHE_TTL_WINE_DETAILS_MS);
+// ---- Wine details (scraped from the server-rendered wine page) ----
+// IMPORTANT: /api/wines/{id} is DEAD — it 404s for every wine (verified 2026-11).
+// The wine page embeds the full wine object as HTML-encoded JSON in a React
+// props attribute (`data-ssr-props` → `pageInformation.wine`), so we fetch the page and read that.
+// /w/{id} 302s to the canonical slug URL, so a wine ID alone is enough.
+// Fallback if the props blob moves: regex the real vintage ID out of the page
+// (`"vintage":{"id":N}`) and call /api/vintages/{N}, which still works.
+export function extractPageInformation(html: string): Record<string, unknown> | null {
+  const $ = cheerio.load(html);
+  let found: Record<string, unknown> | null = null;
+  $('[data-ssr-props], [data-react-props]').each((_, el) => {
+    if (found) return;
+    const raw = $(el).attr('data-ssr-props') ?? $(el).attr('data-react-props');
+    if (!raw || !raw.includes('pageInformation')) return;
+    try {
+      const props = JSON.parse(raw) as Record<string, unknown>;
+      const pi = props.pageInformation as Record<string, unknown> | undefined;
+      if (pi?.wine) found = pi;
+    } catch { /* not JSON — keep looking */ }
+  });
+  return found;
 }
 
 export async function fetchWineDetails(wineId: number, wineUrl?: string | null): Promise<unknown> {
-  return getCached(`wine:${wineId}`, async () => {
-    try {
-      const res = await withRetry(() => apiHttp.get(`/wines/${wineId}`));
-      return res.data;
-    } catch (err) {
-      const e = err as AxiosError;
-      if (e.response?.status === 404 && wineUrl) {
-        const realVintageId = await scrapeRealVintageId(wineId, wineUrl);
-        const res = await withRetry(() => apiHttp.get(`/vintages/${realVintageId}`));
-        return res.data;
-      }
-      throw err;
-    }
+  const pagePath = wineUrl || `/w/${wineId}`;
+  return getCached(`wine:${pagePath}`, async () => {
+    const res = await withRetry(() =>
+      axios.get(`${VIVINO_BASE_URL}${pagePath}`, { headers: baseHeaders(), timeout: 20_000 })
+    );
+    const html = String(res.data);
+    const finalUrl: string | undefined = res.request?.res?.responseUrl;
+    const vivinoUrl = (finalUrl ?? `${VIVINO_BASE_URL}/w/${wineId}`).split('?')[0];
+
+    const pi = extractPageInformation(html);
+    if (pi) return { wine: pi.wine, vivino_url: vivinoUrl };
+
+    const m = html.match(/"vintage":\{"id":(\d+)/);
+    if (!m) throw new Error(`Could not extract wine data from Vivino page: ${pagePath}`);
+    const vres = await withRetry(() => apiHttp.get(`/vintages/${m[1]}`));
+    return { ...(vres.data as Record<string, unknown>), vivino_url: vivinoUrl };
   }, CACHE_TTL_WINE_DETAILS_MS);
 }
 
@@ -231,22 +243,21 @@ export async function fetchWineReviews(wineId: number, page: number, perPage: nu
   return res.data;
 }
 
-export async function fetchWineSearch(params: {
-  query: string; country_codes?: string[]; grape_ids?: number[];
-  min_rating?: number; max_rating?: number; wine_type_ids?: number[];
-  page?: number; per_page?: number;
-}): Promise<unknown> {
-  const searchParams: Record<string, unknown> = {
-    q: params.query, per_page: params.per_page ?? 25, page: params.page ?? 1,
-  };
-  if (params.country_codes?.length) searchParams['country_codes[]'] = params.country_codes;
-  if (params.grape_ids?.length) searchParams['grape_ids[]'] = params.grape_ids;
-  if (params.min_rating != null) searchParams['min_rating'] = params.min_rating;
-  if (params.max_rating != null) searchParams['max_rating'] = params.max_rating;
-  if (params.wine_type_ids?.length) searchParams['wine_type_ids[]'] = params.wine_type_ids;
-  await throttle();
-  const res = await withRetry(() => apiHttp.get('/explore/explore', { params: searchParams }));
-  return res.data;
+// ---- Wine text search (server-rendered HTML page) ----
+// IMPORTANT: /api/explore/explore IGNORES the `q` text query — it's a discovery
+// feed that returns the same wines (cult Cabernets) for any query. Vivino's real
+// text search is the server-rendered page /search/wines?q= (302s to
+// /en/explore?search_term=). We fetch that HTML and let the caller parse the
+// result cards (see parseVivinoSearchHtml in tools/search.ts). Returns raw HTML.
+export async function fetchWineSearch(query: string): Promise<string> {
+  const res = await withRetry(() =>
+    axios.get(`${VIVINO_BASE_URL}/search/wines`, {
+      params: { q: query },
+      headers: baseHeaders(),
+      timeout: 20_000,
+    })
+  );
+  return String(res.data);
 }
 
 export function clearCache(): void {
